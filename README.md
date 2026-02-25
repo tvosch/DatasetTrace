@@ -32,10 +32,7 @@ infini-gram-mini/
 │       ├── cpp/
 │       │   └── indexing.cpp       # Compiled to cpp_indexing binary
 │       ├── rust_indexing          # Compiled Rust binary (built from third_party/suffix_array)
-│       ├── indexing.py            # Core prepare / build_sa_bwt logic
-│       └── jobs/                  # Per-dataset indexing scripts
-│           ├── index_v2_parquet.py
-│           └── ...
+│       └── indexing.py            # Core prepare / build_sa_bwt logic
 ├── scripts/
 │   ├── build_apptainer.sh         # SLURM script: builds the Apptainer image
 │   ├── infini_gram_mini.def       # Apptainer container definition
