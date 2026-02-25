@@ -1,0 +1,155 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+# x86_64 / amd64 only — built on AMD x86_64 HPC nodes.
+# The pre-built SDSL static libs (libsdsl.a, libdivsufsort*.a) are x86_64 object
+# archives and will be linked at container build time.  They are NOT needed at
+# container run time (everything is statically linked into the binaries).
+
+# ---------------------------------------------------------------------------
+# Files copied from the host at build time
+#   left-hand side  : host path (must be visible to the SLURM build node)
+#   right-hand side : destination inside the container
+# ---------------------------------------------------------------------------
+%files
+    PLACEHOLDER_PROJECT_DIR/third_party          /opt/infini-gram-mini/third_party
+    PLACEHOLDER_PROJECT_DIR/infini-gram-mini      /opt/infini-gram-mini/src
+    PLACEHOLDER_PROJECT_DIR/pyproject.toml        /opt/infini-gram-mini/pyproject.toml
+
+# ---------------------------------------------------------------------------
+# Environment exported into every container shell
+# ---------------------------------------------------------------------------
+%environment
+    export PYTHONNOUSERSITE=1
+    export PYTHONPATH=/opt/infini-gram-mini/src:${PYTHONPATH}
+    export PATH=/root/.local/bin:/root/.cargo/bin:${PATH}
+
+# ---------------------------------------------------------------------------
+# Build steps — run once during `apptainer build`
+# ---------------------------------------------------------------------------
+%post
+    set -e
+
+    # ---- Guard: x86_64 only ------------------------------------------------
+    ARCH=$(uname -m)
+    if [ "$ARCH" != "x86_64" ]; then
+        echo "ERROR: This container requires x86_64 (detected: $ARCH). Abort."
+        exit 1
+    fi
+
+    # ---- System packages ----------------------------------------------------
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        make \
+        curl \
+        ca-certificates \
+        python3.12 \
+        python3.12-dev
+    rm -rf /var/lib/apt/lists/*
+
+    # ---- uv (Python package manager) ----------------------------------------
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="/root/.local/bin:${PATH}"
+    export UV_LINK_MODE=copy
+
+    # ---- Rust toolchain (needed to build rust_indexing) --------------------
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y \
+            --default-toolchain stable \
+            --profile minimal \
+            --target x86_64-unknown-linux-gnu \
+            --no-modify-path
+    . /root/.cargo/env
+
+    # ---- Python packages ----------------------------------------------------
+    uv pip install --system --no-cache --break-system-packages \
+        pybind11 \
+        pyarrow \
+        numpy \
+        zstandard
+
+    # ---- Build rust_indexing ------------------------------------------------
+    # Source: third_party/suffix_array (Rust crate)
+    # Output: src/indexing/rust_indexing  (used by indexing.py step 2)
+    cd /opt/infini-gram-mini/third_party/suffix_array
+    cargo build --release
+    cp target/release/rust_indexing \
+       /opt/infini-gram-mini/src/indexing/rust_indexing
+
+    # ---- Recompile libsdsl.a (parallel_sdsl) with -fPIC ---------------------
+    # parallel_sdsl is used by cpp_indexing (parallel SA construction).
+    # The pre-built archive lacks -fPIC; rebuild from the bundled .cpp sources.
+    cd /opt/infini-gram-mini/third_party/parallel_sdsl/lib
+    g++ -std=c++17 -O2 -fPIC -fpermissive \
+        -I/opt/infini-gram-mini/third_party/parallel_sdsl/include \
+        -c *.cpp
+    rm -f libsdsl.a
+    ar rcs libsdsl.a *.o
+    rm -f *.o
+
+    # ---- Recompile libsdsl.a (sdsl) with -fPIC ------------------------------
+    # sdsl is used by cpp_engine (query side).  cpp_engine.h was written
+    # against this API (has load_from_file_; sys/mman.h at global scope).
+    cd /opt/infini-gram-mini/third_party/sdsl/lib
+    g++ -std=c++17 -O2 -fPIC \
+        -I/opt/infini-gram-mini/third_party/sdsl/include \
+        -c *.cpp
+    rm -f libsdsl.a
+    ar rcs libsdsl.a *.o
+    rm -f *.o
+
+    # ---- Build cpp_indexing -------------------------------------------------
+    # Source: src/indexing/cpp/indexing.cpp
+    # Links against: parallel_sdsl libsdsl.a + libdivsufsort*.a (statically)
+    # Output: src/indexing/cpp/cpp_indexing  (used by indexing.py step 3)
+    cd /opt/infini-gram-mini/src/indexing
+    g++ -std=c++17 -O3 \
+        cpp/indexing.cpp \
+        -o cpp/cpp_indexing \
+        -I/opt/infini-gram-mini/third_party/parallel_sdsl/include \
+        -L/opt/infini-gram-mini/third_party/parallel_sdsl/lib \
+        -lsdsl -ldivsufsort -ldivsufsort64
+
+    # ---- Build cpp_engine pybind11 extension --------------------------------
+    # Source: src/engine/src/cpp_engine.cpp
+    # Links against: sdsl libsdsl.a + libdivsufsort*.a (statically)
+    # Output: src/engine/src/cpp_engine.cpython-312-x86_64-linux-gnu.so
+    cd /opt/infini-gram-mini/src/engine
+    c++ -std=c++17 -O3 -shared -fPIC \
+        $(python3.12 -m pybind11 --includes) \
+        src/cpp_engine.cpp \
+        -o src/cpp_engine$(python3.12-config --extension-suffix) \
+        -I/opt/infini-gram-mini/third_party/sdsl/include \
+        -L/opt/infini-gram-mini/third_party/sdsl/lib \
+        -lsdsl -ldivsufsort -ldivsufsort64 -pthread
+
+    # ---- Install the Python package -----------------------------------------
+    # pyproject.toml expects packages under a subdirectory called
+    # "infini-gram-mini" (where = ["infini-gram-mini"]), but the %files
+    # section copies the source to /opt/infini-gram-mini/src.
+    # A symlink satisfies setuptools without renaming everything else.
+    ln -s /opt/infini-gram-mini/src /opt/infini-gram-mini/infini-gram-mini
+    cd /opt/infini-gram-mini
+    uv pip install --system --no-cache --no-deps --break-system-packages -e .
+
+    # ---- Clean up build artefacts -------------------------------------------
+    # Remove Rust build cache (saves ~hundreds of MB)
+    rm -rf /opt/infini-gram-mini/third_party/suffix_array/target
+    # Remove Rust toolchain (not needed at runtime)
+    rm -rf /root/.cargo /root/.rustup
+
+%labels
+    Author tvosch
+    Architecture x86_64
+    Description "infini-gram-mini indexing + query container (Ubuntu 24.04, GCC 13, Python 3.12)"
+
+# ---------------------------------------------------------------------------
+# Default command: run the indexing pipeline
+# Pass all arguments through, e.g.:
+#   apptainer run infini_gram_mini.sif --data_dir ... --save_dir ... --mem ... --cpus ... --num-shards ...
+# ---------------------------------------------------------------------------
+%runscript
+    exec python -m indexing.indexing "$@"

@@ -1,0 +1,87 @@
+# Consider changing!
+!third_party/sdsl/lib/*.a
+!third_party/parallel_sdsl/lib/*.a
+
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]           # .pyc / .pyo / .pyd
+*.pyd
+
+# Distribution / packaging
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Pytest
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# =============================================================================
+# C / C++
+# =============================================================================
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# =============================================================================
+# Rust
+# =============================================================================
+target/
+
+# =============================================================================
+# Compiled project binaries (built from source in this repo)
+# =============================================================================
+# Rust suffix-array binary
+**/rust_indexing
+
+# C++ indexing binary
+**/cpp_indexing
+
+# C++ engine test binary
+**/cpp_engine_test
+
+# =============================================================================
+# SLURM / job output logs
+# =============================================================================
+slurm-*.out
+
+# =============================================================================
+# Editors and OS
+# =============================================================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
