@@ -47,9 +47,7 @@ infini-gram-mini/
 │   ├── query.py                   # CLI query tool (count / search / find)
 │   ├── api_server.py              # Flask REST API server
 │   └── api_config.json            # Index config (edit this to point at your indexes)
-├── docs/                          # Documentation (from upstream)
 ├── pyproject.toml                 # Python package definition
-└── environment.yml                # Python environment spec
 ```
 
 ---
