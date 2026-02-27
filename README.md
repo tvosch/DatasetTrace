@@ -36,8 +36,8 @@ infini-gram-mini/
 ├── scripts/
 │   ├── build_apptainer.sh         # SLURM script: builds the Apptainer image
 │   ├── infini_gram_mini.def       # Apptainer container definition
-│   ├── index_v2_parquet.sh        # SLURM: single-job indexing
-│   └── index_v2_parquet_array.sh  # SLURM: array-job indexing
+│   ├── index_parquet.sh        # SLURM: single-job indexing
+│   └── index_parquet_array.sh  # SLURM: array-job indexing
 ├── third_party/
 │   ├── nlohmann/                  # JSON header
 │   ├── parallel_sdsl/             # SDSL + divsufsort (used by indexing)
