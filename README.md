@@ -143,8 +143,8 @@ apptainer run /path/to/infini_gram_mini.sif \
 Or submit via SLURM:
 
 ```bash
-sbatch scripts/index_v2_parquet.sh        # single job
-sbatch scripts/index_v2_parquet_array.sh  # array job
+sbatch scripts/index_parquet.sh        # single job
+sbatch scripts/index_parquet_array.sh  # array job
 ```
 
 #### 3. Query inside the container
@@ -168,7 +168,23 @@ apptainer exec \
 ### 1. Edit the index config
 
 `api/api_config.json` is a JSON array where each entry describes one named index.
-See `api/api_config_ai2.json` for a multi-index example. Minimal entry:
+
+`index_dirs` accepts two forms:
+- **A root directory string** — all immediate subdirectories are loaded as shards (sorted). Convenient when the indexing job produces `save_dir/00/`, `save_dir/01/`, etc.
+- **A list of directory strings** — explicit list of shard paths, loaded in the given order.
+
+```json
+[
+    {
+        "name": "my_index",
+        "index_dirs": "/path/to/index",
+        "load_to_ram": false,
+        "get_metadata": true
+    }
+]
+```
+
+Or with an explicit shard list:
 
 ```json
 [
@@ -229,11 +245,21 @@ curl -s http://localhost:5000/query \
 
 ### 4. (Optional) Raw Python API
 
+`index_dirs` accepts a root directory (auto-discovers sorted subdirs) or an explicit list of shard paths:
+
 ```python
 from engine.src import InfiniGramMiniEngine
 
+# Option A: single root directory — loads all subdirectories as shards
 engine = InfiniGramMiniEngine(
-    index_dirs=["path/to/index/00"],
+    index_dirs="/path/to/index",
+    load_to_ram=False,
+    get_metadata=True,
+)
+
+# Option B: explicit list of shard directories
+engine = InfiniGramMiniEngine(
+    index_dirs=["/path/to/index/00", "/path/to/index/01"],
     load_to_ram=False,
     get_metadata=True,
 )

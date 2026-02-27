@@ -15,14 +15,27 @@ class InfiniGramMiniEngine:
 
     def __init__(
         self,
-        index_dirs: list[str],
+        index_dirs: str | list[str],
         load_to_ram: bool,
         get_metadata: bool,
     ) -> None:
         if sys.byteorder != "little":
             raise RuntimeError("InfiniGramMiniEngine requires a little-endian system.")
-        if not isinstance(index_dirs, list) or not all(isinstance(d, str) for d in index_dirs):
-            raise TypeError("index_dirs must be a list of strings.")
+
+        if isinstance(index_dirs, str):
+            # Single root directory: collect all immediate subdirectories as shards.
+            root = index_dirs
+            if not os.path.isdir(root):
+                raise FileNotFoundError(f"Index root directory not found: {root!r}")
+            index_dirs = sorted(
+                os.path.join(root, d)
+                for d in os.listdir(root)
+                if os.path.isdir(os.path.join(root, d))
+            )
+            if not index_dirs:
+                raise ValueError(f"No subdirectories found in index root: {root!r}")
+        elif not isinstance(index_dirs, list) or not all(isinstance(d, str) for d in index_dirs):
+            raise TypeError("index_dirs must be a str or a list of strings.")
         if not index_dirs:
             raise ValueError("index_dirs must not be empty.")
 
