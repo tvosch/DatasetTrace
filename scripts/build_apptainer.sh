@@ -13,7 +13,7 @@
 PROJECT_DIR=$PWD
 
 # Where to write the finished .sif image
-OUTPUT_PATH=...
+OUTPUT_PATH=/scratch-shared/$USER
 IMAGE_NAME=infini_gram_mini.sif
 
 # Apptainer cache/tmp — use fast local RAM disk to avoid GPFS thrashing
@@ -35,7 +35,7 @@ sed "s|PLACEHOLDER_PROJECT_DIR|${PROJECT_DIR}|g" \
 # Build
 # ---------------------------------------------------------------------------
 echo "Building Apptainer image: ${OUTPUT_PATH}/${IMAGE_NAME}"
-apptainer build "${OUTPUT_PATH}/${IMAGE_NAME}" "$DEF_FILE"
+apptainer build --force "${OUTPUT_PATH}/${IMAGE_NAME}" "$DEF_FILE"
 
 # Clean up
 rm -f "$DEF_FILE"

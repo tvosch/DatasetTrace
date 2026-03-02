@@ -12,17 +12,17 @@ From: ubuntu:24.04
 #   right-hand side : destination inside the container
 # ---------------------------------------------------------------------------
 %files
-    PLACEHOLDER_PROJECT_DIR/third_party          /opt/infini-gram-mini/third_party
-    PLACEHOLDER_PROJECT_DIR/infini-gram-mini      /opt/infini-gram-mini/src
-    PLACEHOLDER_PROJECT_DIR/pyproject.toml        /opt/infini-gram-mini/pyproject.toml
+    PLACEHOLDER_PROJECT_DIR/third_party          /infini-gram-mini/third_party
+    PLACEHOLDER_PROJECT_DIR/infini-gram-mini      /infini-gram-mini/src
+    PLACEHOLDER_PROJECT_DIR/pyproject.toml        /infini-gram-mini/pyproject.toml
 
 # ---------------------------------------------------------------------------
 # Environment exported into every container shell
 # ---------------------------------------------------------------------------
 %environment
     export PYTHONNOUSERSITE=1
-    export PYTHONPATH=/opt/infini-gram-mini/src:${PYTHONPATH}
-    export PATH=/root/.local/bin:/root/.cargo/bin:${PATH}
+    export PYTHONPATH=/infini-gram-mini/src:${PYTHONPATH}
+    export PATH=/root/.local/bin:/root/.cargo/bin:/usr/local/bin:/usr/bin:/bin:${PATH}
 
 # ---------------------------------------------------------------------------
 # Build steps — run once during `apptainer build`
@@ -74,17 +74,17 @@ From: ubuntu:24.04
     # ---- Build rust_indexing ------------------------------------------------
     # Source: third_party/suffix_array (Rust crate)
     # Output: src/indexing/rust_indexing  (used by indexing.py step 2)
-    cd /opt/infini-gram-mini/third_party/suffix_array
+    cd /infini-gram-mini/third_party/suffix_array
     cargo build --release
     cp target/release/rust_indexing \
-       /opt/infini-gram-mini/src/indexing/rust_indexing
+       /infini-gram-mini/src/indexing/rust_indexing
 
     # ---- Recompile libsdsl.a (parallel_sdsl) with -fPIC ---------------------
     # parallel_sdsl is used by cpp_indexing (parallel SA construction).
     # The pre-built archive lacks -fPIC; rebuild from the bundled .cpp sources.
-    cd /opt/infini-gram-mini/third_party/parallel_sdsl/lib
+    cd /infini-gram-mini/third_party/parallel_sdsl/lib
     g++ -std=c++17 -O2 -fPIC -fpermissive \
-        -I/opt/infini-gram-mini/third_party/parallel_sdsl/include \
+        -I/infini-gram-mini/third_party/parallel_sdsl/include \
         -c *.cpp
     rm -f libsdsl.a
     ar rcs libsdsl.a *.o
@@ -93,9 +93,9 @@ From: ubuntu:24.04
     # ---- Recompile libsdsl.a (sdsl) with -fPIC ------------------------------
     # sdsl is used by cpp_engine (query side).  cpp_engine.h was written
     # against this API (has load_from_file_; sys/mman.h at global scope).
-    cd /opt/infini-gram-mini/third_party/sdsl/lib
+    cd /infini-gram-mini/third_party/sdsl/lib
     g++ -std=c++17 -O2 -fPIC \
-        -I/opt/infini-gram-mini/third_party/sdsl/include \
+        -I/infini-gram-mini/third_party/sdsl/include \
         -c *.cpp
     rm -f libsdsl.a
     ar rcs libsdsl.a *.o
@@ -105,39 +105,44 @@ From: ubuntu:24.04
     # Source: src/indexing/cpp/indexing.cpp
     # Links against: parallel_sdsl libsdsl.a + libdivsufsort*.a (statically)
     # Output: src/indexing/cpp/cpp_indexing  (used by indexing.py step 3)
-    cd /opt/infini-gram-mini/src/indexing
+    cd /infini-gram-mini/src/indexing
     g++ -std=c++17 -O3 \
         cpp/indexing.cpp \
         -o cpp/cpp_indexing \
-        -I/opt/infini-gram-mini/third_party/parallel_sdsl/include \
-        -L/opt/infini-gram-mini/third_party/parallel_sdsl/lib \
+        -I/infini-gram-mini/third_party/parallel_sdsl/include \
+        -L/infini-gram-mini/third_party/parallel_sdsl/lib \
         -lsdsl -ldivsufsort -ldivsufsort64
 
     # ---- Build cpp_engine pybind11 extension --------------------------------
     # Source: src/engine/src/cpp_engine.cpp
     # Links against: sdsl libsdsl.a + libdivsufsort*.a (statically)
     # Output: src/engine/src/cpp_engine.cpython-312-x86_64-linux-gnu.so
-    cd /opt/infini-gram-mini/src/engine
+    cd /infini-gram-mini/src/engine
     c++ -std=c++17 -O3 -shared -fPIC \
         $(python3.12 -m pybind11 --includes) \
         src/cpp_engine.cpp \
         -o src/cpp_engine$(python3.12-config --extension-suffix) \
-        -I/opt/infini-gram-mini/third_party/sdsl/include \
-        -L/opt/infini-gram-mini/third_party/sdsl/lib \
+        -I/infini-gram-mini/third_party/sdsl/include \
+        -L/infini-gram-mini/third_party/sdsl/lib \
         -lsdsl -ldivsufsort -ldivsufsort64 -pthread
 
     # ---- Install the Python package -----------------------------------------
     # pyproject.toml expects packages under a subdirectory called
     # "infini-gram-mini" (where = ["infini-gram-mini"]), but the %files
-    # section copies the source to /opt/infini-gram-mini/src.
+    # section copies the source to /infini-gram-mini/src.
     # A symlink satisfies setuptools without renaming everything else.
-    ln -s /opt/infini-gram-mini/src /opt/infini-gram-mini/infini-gram-mini
-    cd /opt/infini-gram-mini
+    ln -s /infini-gram-mini/src /infini-gram-mini/infini-gram-mini
+    cd /infini-gram-mini
     uv pip install --system --no-cache --no-deps --break-system-packages -e .
+
+    # ---- Python convenience symlinks ----------------------------------------
+    # Ubuntu 24.04 does not create bare `python` or `python3` symlinks by default.
+    ln -sf /usr/bin/python3.12 /usr/local/bin/python3
+    ln -sf /usr/bin/python3.12 /usr/local/bin/python
 
     # ---- Clean up build artefacts -------------------------------------------
     # Remove Rust build cache (saves ~hundreds of MB)
-    rm -rf /opt/infini-gram-mini/third_party/suffix_array/target
+    rm -rf /infini-gram-mini/third_party/suffix_array/target
     # Remove Rust toolchain (not needed at runtime)
     rm -rf /root/.cargo /root/.rustup
 
@@ -152,4 +157,4 @@ From: ubuntu:24.04
 #   apptainer run infini_gram_mini.sif --data_dir ... --save_dir ... --mem ... --cpus ... --num-shards ...
 # ---------------------------------------------------------------------------
 %runscript
-    exec python -m indexing.indexing "$@"
+    exec python3 -m indexing.indexing "$@"

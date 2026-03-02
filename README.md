@@ -36,8 +36,8 @@ infini-gram-mini/
 ├── scripts/
 │   ├── build_apptainer.sh         # SLURM script: builds the Apptainer image
 │   ├── infini_gram_mini.def       # Apptainer container definition
-│   ├── index_parquet.sh        # SLURM: single-job indexing
-│   └── index_parquet_array.sh  # SLURM: array-job indexing
+│   ├── index_parquet.sh           # SLURM: single-job indexing
+│   └── index_parquet_array.sh     # SLURM: array-job indexing
 ├── third_party/
 │   ├── nlohmann/                  # JSON header
 │   ├── parallel_sdsl/             # SDSL + divsufsort (used by indexing)
@@ -282,7 +282,7 @@ Supported input formats: `.parquet` (with `text` column), `.jsonl`, `.json.gz`, 
 
 ```bash
 cd infini-gram-mini/indexing
-python jobs/index_v2_parquet.py \
+python jobs/index_parquet.py \
     --data_dir /path/to/parquet_files \
     --save_dir /path/to/index_output \
 ```
@@ -309,7 +309,7 @@ ulimit -n 1048576
 #SBATCH --cpus-per-task=64
 
 cd /path/to/infini-gram-mini/infini-gram-mini/indexing
-python jobs/index_v2_parquet.py \
+python jobs/index_parquet.py \
     --data_dir /path/to/data \
     --save_dir /path/to/index \
     --num_shards 10 \
