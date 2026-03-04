@@ -6,8 +6,10 @@ import argparse
 import gc
 import glob as _glob
 import gzip
+import itertools
 import json
 import logging
+import math
 import multiprocessing as mp
 import os
 import resource
@@ -16,7 +18,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 import numpy as np
 
@@ -41,12 +43,12 @@ def _load_file(path: str) -> list[str]:
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             return fh.readlines()
     if path.endswith((".zst", ".zstd")):
-        import zstandard as zstd
-        with open(path, "rb") as fh:
-            with zstd.ZstdDecompressor().stream_reader(fh) as reader:
-                text = reader.read().decode("utf-8")
-        lines = text.split("\n")
-        return lines[:-1] if lines and lines[-1] == "" else lines
+        import io, zstandard as zstd
+        def _gen():
+            with open(path, "rb") as fh:
+                reader = zstd.ZstdDecompressor().stream_reader(fh)
+                yield from io.TextIOWrapper(reader, encoding="utf-8")
+        return _gen()
     if path.endswith(".jsonl"):
         with open(path, encoding="utf-8") as fh:
             return fh.readlines()
@@ -54,6 +56,55 @@ def _load_file(path: str) -> list[str]:
         import pyarrow.parquet as pq
         return [json.dumps(row) + "\n" for row in pq.read_table(path).to_pylist()]
     raise ValueError(f"Unsupported file format: {path!r}")
+
+
+def _count_lines(path: str) -> int:
+    """Count the number of records in a source file without fully loading it."""
+    if path.endswith(".gz"):
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            return sum(1 for _ in fh)
+    if path.endswith((".zst", ".zstd")):
+        import io, zstandard as zstd
+        with open(path, "rb") as fh:
+            reader = zstd.ZstdDecompressor().stream_reader(fh)
+            return sum(1 for _ in io.TextIOWrapper(reader, encoding="utf-8"))
+    if path.endswith(".jsonl"):
+        count = 0
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                count += chunk.count(b"\n")
+        return count
+    if path.endswith(".parquet"):
+        import pyarrow.parquet as pq
+        return pq.read_metadata(path).num_rows
+    raise ValueError(f"Unsupported file format: {path!r}")
+
+
+def _load_file_slice(path: str, start_line: int, end_line: int) -> Iterator[str]:
+    """Yield lines [start_line, end_line) from a source file.
+
+    end_line=-1 means read to the end of the file.
+    For uncompressed .jsonl this is fully streaming (no full load into memory).
+    """
+    stop = end_line if end_line != -1 else None
+    if path.endswith(".gz"):
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            yield from itertools.islice(fh, start_line, stop)
+    elif path.endswith((".zst", ".zstd")):
+        import io, zstandard as zstd
+        with open(path, "rb") as fh:
+            reader = zstd.ZstdDecompressor().stream_reader(fh)
+            yield from itertools.islice(io.TextIOWrapper(reader, encoding="utf-8"), start_line, stop)
+    elif path.endswith(".jsonl"):
+        with open(path, encoding="utf-8") as fh:
+            yield from itertools.islice(fh, start_line, stop)
+    elif path.endswith(".parquet"):
+        import pyarrow.parquet as pq
+        rows = pq.read_table(path).to_pylist()
+        end = stop if stop is not None else len(rows)
+        yield from (json.dumps(row) + "\n" for row in rows[start_line:end])
+    else:
+        raise ValueError(f"Unsupported file format: {path!r}")
 
 
 def _parse_record(
@@ -79,7 +130,7 @@ def _sdsl_finalize(fout: BinaryIO) -> None:
 
 
 def _prepare_few(
-    files: list[str], common_dir: str, save_dir: str,
+    files: list[tuple[str, int, int]], common_dir: str, save_dir: str,
     doc_sep: bytes, text_key: str, batch_size: int, cpus: int,
 ) -> None:
     """Sequential prepare path for small numbers of source files."""
@@ -97,20 +148,26 @@ def _prepare_few(
         mt_fout.write(b"\x00" * _SDSL_HEADER)
         od = om = 0
 
-        for path in files:
-            rel   = os.path.relpath(path, common_dir)
-            lines = _load_file(path)
-            for start in range(0, len(lines), batch_size):
-                batch  = lines[start : start + batch_size]
-                parsed = pool.starmap(
-                    _parse_record,
-                    [(ln, doc_sep, text_key, rel, start + i) for i, ln in enumerate(batch)],
-                )
+        for path, start_line, end_line in files:
+            rel = os.path.relpath(path, common_dir)
+            batch, line_idx = [], start_line
+            for line in _load_file_slice(path, start_line, end_line):
+                batch.append((line, doc_sep, text_key, rel, line_idx))
+                line_idx += 1
+                if len(batch) >= batch_size:
+                    parsed = pool.starmap(_parse_record, batch)
+                    for data, meta in parsed:
+                        ds_fout.write(data);  od_fout.write(od.to_bytes(8, "little")); od += len(data)
+                        mt_fout.write(meta);  om_fout.write(om.to_bytes(8, "little")); om += len(meta)
+                    del parsed, batch
+                    batch = []
+                    gc.collect()
+            if batch:
+                parsed = pool.starmap(_parse_record, batch)
                 for data, meta in parsed:
                     ds_fout.write(data);  od_fout.write(od.to_bytes(8, "little")); od += len(data)
                     mt_fout.write(meta);  om_fout.write(om.to_bytes(8, "little")); om += len(meta)
                 del parsed
-            del lines
             gc.collect()
 
         _sdsl_finalize(ds_fout)
@@ -120,12 +177,11 @@ def _prepare_few(
 
 
 def _map_worker(
-    filenum: int, path: str, tmp_dir: str,
+    filenum: int, path: str, start_line: int, end_line: int, tmp_dir: str,
     doc_sep: bytes, text_key: str, rel_path: str,
 ) -> None:
-    """Parse one source file into temporary binary shard files."""
+    """Parse one source file slice into temporary binary shard files."""
     tmp = Path(tmp_dir)
-    lines = _load_file(path)
     with (
         open(tmp / f"text_data.{filenum:04d}",   "wb") as ds_fout,
         open(tmp / f"data_offset.{filenum:04d}", "wb") as od_fout,
@@ -133,7 +189,7 @@ def _map_worker(
         open(tmp / f"meta_offset.{filenum:04d}", "wb") as om_fout,
     ):
         od = om = 0
-        for linenum, line in enumerate(lines):
+        for linenum, line in enumerate(_load_file_slice(path, start_line, end_line), start_line):
             data, meta = _parse_record(line, doc_sep, text_key, rel_path, linenum)
             ds_fout.write(data);  od_fout.write(od.to_bytes(8, "little")); od += len(data)
             mt_fout.write(meta);  om_fout.write(om.to_bytes(8, "little")); om += len(meta)
@@ -160,7 +216,7 @@ def _reduce_worker(
 
 
 def _prepare_many(
-    files: list[str], common_dir: str, save_dir: str, temp_dir: str,
+    files: list[tuple[str, int, int]], common_dir: str, save_dir: str, temp_dir: str,
     doc_sep: bytes, text_key: str, cpus: int,
 ) -> None:
     """Parallel map-reduce prepare path for large numbers of source files."""
@@ -173,8 +229,8 @@ def _prepare_many(
 
     with mp.get_context("fork").Pool(cpus) as pool:
         pool.starmap(_map_worker, [
-            (i, p, str(tmp), doc_sep, text_key, os.path.relpath(p, common_dir))
-            for i, p in enumerate(files)
+            (i, path, start, end, str(tmp), doc_sep, text_key, os.path.relpath(path, common_dir))
+            for i, (path, start, end) in enumerate(files)
         ])
 
         data_sizes = [os.path.getsize(tmp / f"text_data.{i:04d}")   for i in range(len(files))]
@@ -217,7 +273,7 @@ def _prepare_many(
 
 
 def prepare(
-    files: list[str], common_dir: str, save_dir: str, temp_dir: str,
+    files: list[tuple[str, int, int]], common_dir: str, save_dir: str, temp_dir: str,
     doc_sep: bytes, text_key: str, batch_size: int, cpus: int,
 ) -> None:
     """Write text_{data,meta}.sdsl and {data,meta}_offset to save_dir."""
@@ -375,17 +431,41 @@ def collect_input_files(data_dirs: list[str]) -> list[tuple[str, int]]:
     return results
 
 
-def split_into_shards(files: list[tuple[str, int]], num_shards: int) -> list[list[str]]:
-    """Greedily partition files into num_shards groups of roughly equal total size."""
+def split_into_shards(
+    files: list[tuple[str, int]], num_shards: int
+) -> list[list[tuple[str, int, int]]]:
+    """Greedily partition files into num_shards groups of roughly equal total size.
+
+    Files larger than the per-shard target are split into line-range slices so
+    that no single shard exceeds the target.  Each entry in the returned lists is
+    a (path, start_line, end_line) tuple, where end_line=-1 means "to end of file".
+    """
     if not files:
         return []
     total  = sum(s for _, s in files)
     target = total / num_shards
-    shards: list[list[str]] = []
-    current: list[str] = []
-    current_size = 0
+
+    # Expand files that exceed the target into multiple line-range slices.
+    slices: list[tuple[str, int, int, int]] = []  # (path, start, end, approx_size)
     for path, size in files:
-        current.append(path)
+        if size <= target:
+            slices.append((path, 0, -1, size))
+        else:
+            n_pieces   = math.ceil(size / target)
+            log.info("  Splitting %s into %d pieces (%.1f GiB each)",
+                     os.path.basename(path), n_pieces, size / n_pieces / 1024 ** 3)
+            line_count = _count_lines(path)
+            lines_per  = math.ceil(line_count / n_pieces)
+            for i in range(n_pieces):
+                start = i * lines_per
+                end   = min((i + 1) * lines_per, line_count)
+                slices.append((path, start, end, int(size * (end - start) / line_count)))
+
+    shards: list[list[tuple[str, int, int]]] = []
+    current: list[tuple[str, int, int]] = []
+    current_size = 0
+    for path, start, end, size in slices:
+        current.append((path, start, end))
         current_size += size
         if current_size >= target and len(shards) < num_shards - 1:
             shards.append(current)
@@ -396,7 +476,7 @@ def split_into_shards(files: list[tuple[str, int]], num_shards: int) -> list[lis
 
 
 def index_shard(
-    shard_files: list[str], common_dir: str, save_dir: str,
+    shard_files: list[tuple[str, int, int]], common_dir: str, save_dir: str,
     temp_dir: str, args: argparse.Namespace,
 ) -> None:
     """Run the full three-step indexing pipeline for a single shard."""
@@ -478,6 +558,9 @@ def main() -> None:
     log.info("Split into %d shard(s).", len(shards))
 
     for sid in shard_ids:
+        if sid >= len(shards):
+            log.info("Shard %02d: no files assigned (only %d shard(s) total), skipping.", sid, len(shards))
+            continue
         shard_save  = os.path.join(args.save_dir, f"{sid:02d}")
         shard_temp  = os.path.join(args.temp_dir,  f"tmp_{sid:02d}")
         shard_files = shards[sid]
@@ -486,7 +569,7 @@ def main() -> None:
             log.info("Shard %02d: already complete, skipping.", sid)
             continue
 
-        log.info("Shard %02d: %d file(s) -> %s", sid, len(shard_files), shard_save)
+        log.info("Shard %02d: %d slice(s) -> %s", sid, len(shard_files), shard_save)
         index_shard(shard_files, common_dir, shard_save, shard_temp, args)
         shutil.rmtree(shard_temp, ignore_errors=True)
 

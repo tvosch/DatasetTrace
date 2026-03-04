@@ -47,7 +47,8 @@ From: ubuntu:24.04
         curl \
         ca-certificates \
         python3.12 \
-        python3.12-dev
+        python3.12-dev \
+        libdivsufsort-dev
     rm -rf /var/lib/apt/lists/*
 
     # ---- uv (Python package manager) ----------------------------------------
