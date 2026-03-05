@@ -431,6 +431,33 @@ def collect_input_files(data_dirs: list[str]) -> list[tuple[str, int]]:
     return results
 
 
+def count_shards(files: list[tuple[str, int]], num_shards: int) -> int:
+    """Return the actual number of shards that split_into_shards will produce.
+
+    Uses only file sizes — no I/O beyond stat.  Useful for setting --array bounds
+    before submitting a SLURM job.
+    """
+    if not files:
+        return 0
+    total  = sum(s for _, s in files)
+    target = total / num_shards
+    n_slices = sum(math.ceil(size / target) if size > target else 1 for _, size in files)
+    # Simulate greedy packing: each slice is at most `target` bytes; two consecutive
+    # slices whose combined size >= target form one shard.
+    n_shards = 0
+    current_size = 0
+    for _, size in files:
+        slice_size = size / (math.ceil(size / target) if size > target else 1)
+        for _ in range(math.ceil(size / target) if size > target else 1):
+            current_size += slice_size
+            if current_size >= target and n_shards < num_shards - 1:
+                n_shards += 1
+                current_size = 0
+    if current_size > 0:
+        n_shards += 1
+    return n_shards
+
+
 def split_into_shards(
     files: list[tuple[str, int]], num_shards: int
 ) -> list[list[tuple[str, int, int]]]:
@@ -513,11 +540,24 @@ def main() -> None:
                         help="Records per batch in the few-files prepare path.")
     parser.add_argument("--cpus",       type=int, default=mp.cpu_count(),
                         help="Number of CPU cores to use.")
-    parser.add_argument("--mem",        type=int, required=True,
-                        help="Available memory in GiB.")
+    parser.add_argument("--mem",        type=int, default=None,
+                        help="Available memory in GiB (required unless --dry_run).")
     parser.add_argument("--ulimit",     type=int, default=1_048_576,
                         help="Target open-file-descriptor limit (capped at the system hard limit).")
+    parser.add_argument("--dry_run",    action="store_true",
+                        help="Print the number of shards that would be created and exit. "
+                             "Uses only file sizes (no decompression). "
+                             "Use this to set --array bounds before submitting a SLURM job.")
     args = parser.parse_args()
+
+    if args.dry_run:
+        all_files = collect_input_files(args.data_dir)
+        n = count_shards(all_files, args.num_shards)
+        print(n)
+        return
+
+    if args.mem is None:
+        parser.error("--mem is required unless --dry_run is set")
 
     if sys.byteorder != "little":
         raise RuntimeError("Only little-endian systems are supported.")
