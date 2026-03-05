@@ -6,8 +6,8 @@ import sys
 from .models import CountResponse, DocResponse, EngineResponse, FindResponse
 from .cpp_engine import Engine
 
-_REQUIRED_FILES             = ("data.fm9", "data_offset")
-_REQUIRED_FILES_WITH_META   = ("data.fm9", "data_offset", "meta.fm9", "meta_offset")
+_REQUIRED_FILES = ("data.fm9", "data_offset")
+_REQUIRED_FILES_WITH_META = ("data.fm9", "data_offset", "meta.fm9", "meta_offset")
 
 
 class InfiniGramMiniEngine:
@@ -34,7 +34,9 @@ class InfiniGramMiniEngine:
             )
             if not index_dirs:
                 raise ValueError(f"No subdirectories found in index root: {root!r}")
-        elif not isinstance(index_dirs, list) or not all(isinstance(d, str) for d in index_dirs):
+        elif not isinstance(index_dirs, list) or not all(
+            isinstance(d, str) for d in index_dirs
+        ):
             raise TypeError("index_dirs must be a str or a list of strings.")
         if not index_dirs:
             raise ValueError("index_dirs must not be empty.")
@@ -50,10 +52,10 @@ class InfiniGramMiniEngine:
                     "Has indexing completed successfully?"
                 )
 
-        self._index_dirs    = index_dirs
-        self._load_to_ram   = load_to_ram
-        self._get_metadata  = get_metadata
-        self._engine        = Engine(index_dirs, load_to_ram, get_metadata)
+        self._index_dirs = index_dirs
+        self._load_to_ram = load_to_ram
+        self._get_metadata = get_metadata
+        self._engine = Engine(index_dirs, load_to_ram, get_metadata)
 
     @property
     def num_shards(self) -> int:
@@ -97,7 +99,9 @@ class InfiniGramMiniEngine:
     ) -> EngineResponse[DocResponse]:
         """Retrieve the document containing the occurrence at position *rank* in shard *s*."""
         if not 0 <= s < self.num_shards:
-            raise ValueError(f"Shard index s={s} is out of range [0, {self.num_shards}).")
+            raise ValueError(
+                f"Shard index s={s} is out of range [0, {self.num_shards})."
+            )
         if rank < 0:
             raise ValueError(f"rank must be non-negative, got {rank}.")
         if needle_len < 0:
@@ -116,12 +120,12 @@ class InfiniGramMiniEngine:
                 )
             }
         return {
-            "doc_ix":        result.doc_ix,
-            "doc_len":       result.doc_len,
-            "disp_len":      result.disp_len,
+            "doc_ix": result.doc_ix,
+            "doc_len": result.doc_len,
+            "disp_len": result.disp_len,
             "needle_offset": result.needle_offset,
-            "metadata":      result.metadata,
-            "text":          text,
+            "metadata": result.metadata,
+            "text": text,
         }
 
     def count_batch(self, queries: list[str]) -> list[EngineResponse[CountResponse]]:
@@ -148,7 +152,7 @@ class InfiniGramMiniEngine:
 
         segments = find_result["segment_by_shard"]
         pointers = [lo for lo, _ in segments]
-        ends     = [hi for _, hi in segments]
+        ends = [hi for _, hi in segments]
 
         while len(docs) < max_results:
             advanced = False
@@ -156,7 +160,9 @@ class InfiniGramMiniEngine:
                 if len(docs) >= max_results:
                     break
                 if pointers[s] < ends[s]:
-                    docs.append(self.get_doc_by_rank(s, pointers[s], needle_len, max_ctx_len))
+                    docs.append(
+                        self.get_doc_by_rank(s, pointers[s], needle_len, max_ctx_len)
+                    )
                     pointers[s] += 1
                     advanced = True
             if not advanced:
