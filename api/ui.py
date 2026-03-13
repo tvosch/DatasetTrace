@@ -182,7 +182,7 @@ def build_ui(api_url: str, index_names: list[str]) -> gr.Blocks:
     """Construct the Gradio interface."""
     default_index = index_names[0] if index_names else None
 
-    with gr.Blocks(title="infini-gram-mini", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="infini-gram-mini") as demo:
         gr.Markdown(
             "# infini-gram-mini\n"
             "Exact n-gram search over large text corpora via FM-index."
@@ -282,7 +282,7 @@ def main() -> None:
         print("Warning: no indexes found. The API server may not be running yet.")
 
     demo = build_ui(args.api_url, index_names)
-    demo.launch(server_port=args.port, share=args.share)
+    demo.launch(server_name="0.0.0.0", server_port=args.port, share=args.share, theme=gr.themes.Soft())
 
 
 if __name__ == "__main__":
