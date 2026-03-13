@@ -1,0 +1,84 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Build the image once:  docker compose build
+  # ---------------------------------------------------------------------------
+  infini-gram-mini:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: infini-gram-mini:latest
+
+  # ---------------------------------------------------------------------------
+  # Index a dataset
+  #
+  #   docker compose run --rm index \
+  #       --data_dir /data --save_dir /index --num_shards 10 --cpus 16
+  #
+  # Set DATA_DIR / INDEX_DIR on the host (or edit the paths below).
+  # ---------------------------------------------------------------------------
+  index:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: infini-gram-mini:latest
+    volumes:
+      - ${DATA_DIR:-/tmp/data}:/data
+      - ${INDEX_DIR:-/tmp/index}:/index
+    command: ["--data_dir", "/data", "--save_dir", "/index"]
+
+  # ---------------------------------------------------------------------------
+  # Query an existing index (count / search)
+  #
+  #   docker compose run --rm query count --config /api/api_config.json "BERT"
+  #   docker compose run --rm query search --config /api/api_config.json "BERT"
+  #
+  # The api/ directory is mounted from the host so query.py and api_config.json
+  # are available inside the container without being baked into the image.
+  # ---------------------------------------------------------------------------
+  query:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: infini-gram-mini:latest
+    volumes:
+      - ${INDEX_DIR:-/tmp/index}:/index
+      - ./api:/api
+    entrypoint: ["python3", "/api/query.py"]
+
+  # ---------------------------------------------------------------------------
+  # REST API server
+  #
+  #   docker compose up api
+  #
+  # Not exposed publicly — the UI talks to it over the internal Docker network.
+  # Bind to 127.0.0.1 only if you want local access for debugging.
+  # ---------------------------------------------------------------------------
+  api:
+    image: infini-gram-mini:latest
+    volumes:
+      - ${INDEX_DIR:-/tmp/index}:/index
+      - ./api:/api
+    entrypoint: ["python3", "/api/api_server.py"]
+    command: ["--config", "/api/api_config.json", "--port", "5000"]
+    ports:
+      - "127.0.0.1:5000:5000"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Gradio UI  →  http://localhost:7860
+  #
+  #   docker compose up ui
+  #
+  # Expose this port (7860) publicly. The API stays internal.
+  # ---------------------------------------------------------------------------
+  ui:
+    image: infini-gram-mini:latest
+    volumes:
+      - ./api:/api
+    entrypoint: ["python3", "/api/ui.py"]
+    command: ["--api_url", "http://api:5000", "--port", "7860"]
+    ports:
+      - "7860:7860"
+    depends_on:
+      - api
+    restart: unless-stopped
