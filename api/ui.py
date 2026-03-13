@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import html as _html
 import json
+import os
 
 import gradio as gr
 import requests
@@ -282,7 +283,8 @@ def main() -> None:
         print("Warning: no indexes found. The API server may not be running yet.")
 
     demo = build_ui(args.api_url, index_names)
-    demo.launch(server_name="0.0.0.0", server_port=args.port, share=args.share, theme=gr.themes.Soft())
+    share = args.share or os.environ.get("GRADIO_SHARE", "0") == "1"
+    demo.launch(server_name="0.0.0.0", server_port=args.port, share=share, theme=gr.themes.Soft())
 
 
 if __name__ == "__main__":

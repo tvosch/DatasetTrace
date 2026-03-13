@@ -77,6 +77,8 @@ services:
       - ./api:/api
     entrypoint: ["python3", "/api/ui.py"]
     command: ["--api_url", "http://api:5000", "--port", "7860"]
+    environment:
+      - GRADIO_SHARE=${GRADIO_SHARE:-0}
     ports:
       - "7860:7860"
     depends_on:
