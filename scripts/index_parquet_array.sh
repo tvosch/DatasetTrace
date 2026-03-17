@@ -8,9 +8,11 @@
 #SBATCH --constraint=scratch-node # get local disk if possible
 
 # Save to local disk if possible
-# Potentially do more shards and more arrays like NUM_SHARDS=20 and --array=0-19%8
-# Aim to have 1 shard max 128 GB?
-
+# Aim to have 1 shard max ~50 GB corpus (rule of thumb: corpus ≈ 5× compressed file size).
+#
+# Before submitting, check how many shards will actually be created (instant, no decompression):
+#   python -m indexing.indexing --data_dir $DATA_DIR --num_shards $NUM_SHARDS --dry_run
+# Set --array=0-(N-1) accordingly to avoid wasting jobs on empty shards.
 
 # module loads or apptainer
 

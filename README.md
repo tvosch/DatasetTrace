@@ -289,6 +289,24 @@ python jobs/index_parquet.py \
 
 The script automatically selects between the few-files and many-files pipeline depending on file count, and produces one index shard per entry in `save_dir/00/`, `save_dir/01/`, etc.
 
+### Tuning `--num_shards` for SLURM array jobs
+
+`--num_shards N` sets a **target size per shard** (`total_dataset_size / N`), not the exact shard count. Files larger than the target are split into line-range slices; the actual number of shards produced depends on how those slices pack together and can be less than N.
+
+Use `--dry_run` to check the actual count before submitting — it uses only file sizes (no decompression, completes in under a second):
+
+```bash
+python -m indexing.indexing \
+    --data_dir /path/to/data \
+    --num_shards 20 \
+    --dry_run
+# → prints: 11
+```
+
+Then set `--array=0-10` instead of `--array=0-19` to avoid wasting jobs on shards that have nothing to do.
+
+**Memory sizing:** for compressed formats (`.zst`, `.json.gz`), corpus size per shard is typically 4–6× the on-disk slice size. Step 3 (FM-index / wavetree) needs roughly 2–3× corpus size in RAM. Target ≤ 50 GB corpus per shard to stay within 300 GB nodes.
+
 If you hit "too many open files":
 
 ```bash
