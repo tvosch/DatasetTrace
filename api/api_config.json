@@ -1,2 +1,8 @@
 [
+  {
+    "name": "example-index",
+    "index_dirs": ["/index"],
+    "load_to_ram": false,
+    "get_metadata": true
+  }
 ]
